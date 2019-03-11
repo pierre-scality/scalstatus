@@ -1,0 +1,24 @@
+svsd:
+  - type: service
+  - service: scality-svsd
+  - state: service.status
+
+smb:
+  - type: service
+  - service: 
+    - sernet-samba-smbd
+    - sernet-samba-nmbd
+
+sfused:
+  - type: service
+  - service: scality-sfused
+  - target: grain:roles:ROLE_CONN_CIFS
+
+default:
+  - list:
+    - elasticsearch
+    - corosync
+
+samba:
+  - type: samba
+
