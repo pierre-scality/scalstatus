@@ -130,9 +130,7 @@ def check_zk():
   display.info('{0} leader and {1} zookeeper follower found'.format(leader,follower),label="OK")
   return(0)
 
-def check_es():
-  check_service("elasticsearch","service.enabled","roles:ROLE_ELASTIC")
-  check_service("elasticsearch","service.status","roles:ROLE_ELASTIC")
+def check_elasticsearch(argument=None):
   es=local.cmd('roles:ROLE_SUP','cmd.run',['hostname'],expr_form="grain")
   target="localhost"
   url="http://{0}/api/v0.1/es_proxy/_cluster/health?pretty".format(target)
@@ -157,15 +155,6 @@ def check_es():
     if display.get() == "debug":
       print json.dumps(status,indent=2)
     
-
-def check_samba(target="roles:ROLE_CONN_CIFS",service=None):
-  if service == None:
-    service=['sernet-samba-smbd','sernet-samba-nmbd']
-  for i in service:
-    check_service(i,"service.enabled",target)
-    check_service(i,"service.status",target) 
-
-
 
 class BuildReq():
   def __init__(self,definition=None,list=None):
@@ -211,11 +200,11 @@ class BuildReq():
       display.error('Neither file nor list specified')
       exit(9)
     self.process_file()
-    self.display_parsed()
+    #self.display_parsed()
     return(self.todo)
 
   def process_file(self):
-    print self.inputdict
+    #print self.inputdict
     #print self.inputdict.keys()
     for i in self.inputdict.keys():
       if i == "default":
@@ -226,7 +215,9 @@ class BuildReq():
       else:
         self.process_std(self.inputdict[i])
     return(0)
- 
+
+  # this function handle the default section of propery file
+  # the default entries must be in self.default_checks dict. 
   def process_default(self,list):
     for i in list:
       display.debug('process_default with {0}'.format(i))
@@ -331,6 +322,7 @@ class BuildReq():
   def build_from_default_type(self):
     self.target=self.default_type[self.what]['target']
     for i in self.default_type[self.what]['svclist']:
+      #self.what='service'
       self.service=i
       self.todo.append(self.add_to_list())
     if 'function' in self.default_type[self.what]:
@@ -352,8 +344,8 @@ class Check():
       prop=BuildReq(definition[0])
       self.custom = True 
       self.inputdict=prop.parse_definition()
-      self.check_server_status()
-      self.check_custom(self.inputdict)
+    #  self.check_server_status()
+    #  self.check_custom(self.inputdict)
     else:
       mydefault={'default': [{'list': ['elasticsearch', 'corosync']}], 
                   'svsd': [{'type': 'service'}, {'service': 'scality-svsd'}, {'state': 'service.status'}], 'samba': [{'type': 'samba'}], 
@@ -361,10 +353,9 @@ class Check():
                   {'service': 'scality-sfused'}, {'target': 'grain:roles:ROLE_CONN_CIFS'}]}
       prop=BuildReq(list=mydefault)
       #self.inputdict=prop.parse_definition()
-      self.check_server_status()
-      self.check_custom(self.inputdict)
-      #self.standard_check()
-      exit(0)    
+    self.check_server_status()
+    self.check_custom(self.inputdict)
+    exit(0)    
       
 
   def run_std_check(self,entry):
@@ -403,24 +394,26 @@ class Check():
       self.do_check_service( )
   
   def check_custom(self,list):
-    display.debug("do check_customer against {0}".format(self.service)) 
     for i in list:
+      display.debug("do check_custome against {0}".format(i)) 
       if i['type'] == 'service':
         self.target=i['target']
         self.service=i['service']
         self.state=i['state']
         self.do_check_service()
+        if not 'argv' in i:
+          display.debug("Not argv found, should be there {0}".format(i.keys()))
+          return()
+      if i['argv'] != None:
+        # Special action to process
+        self.do_extended(i)
      
   def do_check_service(self,msg=""):
-    #targettype=self.target[0]
-    #target=self.target[1:]
     if msg == "" :
       msg = "Checking {1} for {0} service on {2}".format(self.service,self.state,self.target)
     display.verbose(msg)
     targetname=self.target.split(':',1)[1]
     targettype=self.target.split(':')[0]
-    #'roles:ROLE_SVSD','service.status',['scality-svsd'],expr_form="grain"
-    #print targetname,self.state,str([self.service]),"expr_form="+str(targettype)
     resp=local.cmd(targetname,self.state,[self.service],expr_form=targettype)
     bad=[]
     good=[]
@@ -435,12 +428,33 @@ class Check():
       return(9)
     else:
       display.info("{0} {1} is ok on all servers ({2})".format(self.service,self.state,','.join(good)),label="OK") 
-      display.debug("Servers list ({0})".format(','.join(bad))) 
+      display.debug("BAD servers list ({0})".format(','.join(bad))) 
       return(1)
     return(0)
     exit(0)
 
+  def do_extended(self,list):
+    if 'argv' in list:
+      if 'function' in list['argv']:
+        ret=self.do_run_function(list['argv'])
+        return(ret)
+      else:
+        display.debug('Not implemented {0}'.format(list))
+    else:
+      display.debug('Should not reach here {0}'.format(list))
+      return(9)
 
+
+  def do_run_function(self,argv):
+    funct=argv['function']
+    if 'args' in argv:
+      argument == argv['args']
+    else:
+      argument = None
+    if funct == 'check_elasticsearch':
+      ret=check_elasticsearch(argument) 
+      return(ret)
+  
   def check_server_status(self):
     bad=[]
     display.info("Checking all servers availability")
@@ -487,23 +501,6 @@ class Check():
     display.debug("Servers list ({0})".format(','.join(bad))) 
     return(0)
 
-   # list is indexed by hostname
-
-  def check_svsd(self,type="scality-svsd",target="roles:ROLE_SVSD",targettype='grain'):
-    display.verbose("Checking svsd service")
-    svsd=self.check_service("scality-svsd","service.status",target,targettype)
-    svsd=self.check_service("scality-svsd","service.enabled",target,targettype)
-   
-  def standard_check(self):
-    self.check_server_status()
-    self.check_svsd()
-    check_zk()
-    #def check_fuse(type="scality-sfused",target="ROLE_CONN_SOFS",targettype='roles'):
-    #check_fuse()
-    check_fuse(target="ROLE_CONN_CIFS")
-    check_es()
-    check_corosync()
-    check_samba()
 
 def main():
   disable_proxy()
