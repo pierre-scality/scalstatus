@@ -143,7 +143,7 @@ def check_elasticsearch(argument=None):
   if r.status_code == 200:
     status=json.loads(r.text)
   else:
-    display.error("Sup return non 200 response {0}".format(r.status_code))
+    display.error("Elasticsearch not responding: Sup return non 200 response {0}".format(r.status_code))
     return(1)
   display.debug("Elasticsearch output".format(status))
   if status['status'] == 'green': 
@@ -352,7 +352,7 @@ class Check():
                   'smb': [{'type': 'service'}, {'service': ['sernet-samba-smbd', 'sernet-samba-nmbd']}], 'sfused': [{'type': 'service'}, 
                   {'service': 'scality-sfused'}, {'target': 'grain:roles:ROLE_CONN_CIFS'}]}
       prop=BuildReq(list=mydefault)
-      #self.inputdict=prop.parse_definition()
+      self.inputdict=prop.parse_definition()
     self.check_server_status()
     self.check_custom(self.inputdict)
     exit(0)    
