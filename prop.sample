@@ -1,6 +1,7 @@
 svsd:
   - type: service
-  - service: scality-svsd
+  - service: 
+    - scality-svsd
   - state: service.status
 
 smb:
