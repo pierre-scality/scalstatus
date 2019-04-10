@@ -182,8 +182,6 @@ def check_zk():
   return(0)
 
 def check_es():
-  check_service("elasticsearch","service.enabled","roles:ROLE_ELASTIC")
-  check_service("elasticsearch","service.status","roles:ROLE_ELASTIC")
   es=local.cmd('roles:ROLE_SUP','cmd.run',['hostname'],expr_form="grain")
   target="localhost"
   url="http://{0}/api/v0.1/es_proxy/_cluster/health?pretty".format(target)
@@ -226,9 +224,10 @@ class Check():
     self.inputdict={}
     # This list is for basic service checks 
     # service (as mentionned in yaml) : servicename, state to run, target targettype:saltformat target
+    # a fourth argument will be treated as a function to run, 1 time after services have been checked.
     self.default_checks={
     'scality-svsd' : ['scality-svsd',['service.enabled','service.status'],'grain:roles:ROLE_SVSD'],
-    'elasticsearch' : ['elasticsearch',['service.enabled','service.status'],'grain:roles:ROLE_ELASTIC'],
+    'elasticsearch' : ['elasticsearch',['service.enabled','service.status'],'grain:roles:ROLE_ELASTIC','check_es'],
     'corosync' : ['corosync',['service.enabled','service.status'],'grain:roles:ROLE_COROSYNC'],
     'sernet-samba-smbd' : ['sernet-samba-smbd',['service.enabled','service.status'],'grain:roles:ROLE_CONN_CIFS'],
     'sernet-samba-nmbd' : ['sernet-samba-nmbd',['service.enabled','service.status'],'grain:roles:ROLE_CONN_CIFS']
@@ -288,6 +287,7 @@ class Check():
         if 'svclist' in self.default_type[self.what]:
           for srv in self.default_type[self.what]['svclist']:
             self.run_std_check(srv)
+        ## We reach here when using a default type to run a function
         if 'function' in self.default_type[self.what]:
           for fn in self.default_type[self.what]['function']:
             self.run_std_function(fn)
@@ -340,8 +340,15 @@ class Check():
       self.target=self.default_checks[i][2]
       for state in self.default_checks[i][1]:
         self.state=state
-        self.do_check_service() 
-      
+        self.do_check_service()
+      if len(self.default_checks[i]) == 4:
+        self.run_function_by_name(self.default_checks[i][3])
+     
+  def run_function_by_name(self,name):
+    display.verbose('Running addtionnal check {0}'.format(name))
+    if name == 'check_es':
+      check_es()
+ 
   def do_check_service(self,msg=""):
     #targettype=self.target[0]
     #target=self.target[1:]
@@ -451,7 +458,7 @@ class Check():
     check_fuse()
     check_fuse(target="ROLE_CONN_CIFS")
     check_es()
-    check_corosync()
+    #check_corosync()
     check_samba()
 
 def main():
