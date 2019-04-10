@@ -10,6 +10,7 @@ It can be used in 2 modes :
 
 ## Propery file structure
 Format is like :
+```
 svsd:
   - type: service 
   - service: scality-svsd
@@ -26,6 +27,7 @@ default:
 
 samba:
   - type: samba
+```
 
 The root of each section is a tag.
 Then we can have 3 various types.
