@@ -13,24 +13,31 @@ import salt.runner
 
 # local import
 from msg import Msg 
-#from scalchecks import BuildReq
-#from scalchecks import Check 
 
 local = salt.client.LocalClient()
 
 class ExtFunctions():
-  def __init__(self,**kwargs):
+  def __init__(self,obj,msg='info'):
     self.display=Msg()
+    self.display.set(msg)
+    self.obj=obj
 
-  def check_zk(self):
-    display.verbose("Checking zookeeper status ")
+  def execit(self):
+    if self.obj == 'elasticsearch':
+      self.check_elasticsearch()
+    if self.obj == 'zookeeper':
+      self.check_zk()
+    else:
+      self.display.error('Object {0} has no function implemented'.format(self.obj))
+
+  def check_zk(self,zkcount=5):
+    self.display.verbose("Checking zookeeper status ")
     #global args.zkcount
-    zkcount=int(args.zkcount)
     follower=0
     leader=0
     # salt -G roles:ROLE_ZK_NODE cmd.run 'echo stat | nc localhost 2181|grep Mode'
     zk=local.cmd('roles:ROLE_ZK_NODE','cmd.run',['echo stat | nc localhost 2181|grep Mode'],expr_form="grain")
-    display.debug("Zookeeper result {0}".format(zk))
+    self.display.debug("Zookeeper result {0}".format(zk))
     if len(zk.keys()) != zkcount:
       self.display.warning("Zookeeper does not run {0} instances".format(zkcount))
     for i in zk.keys():
@@ -74,3 +81,4 @@ class ExtFunctions():
         self.display.error("There are {0} unassigned shards on the cluster".format(status["unassigned_shards"]))
       if self.display.get() == "debug":
         print json.dumps(status,indent=2)
+    return(0)

@@ -8,8 +8,9 @@ class Msg():
     self.level=level
     self.valid=['info','debug','verbose','warning']
 
-  def set(self,level):
-    print "{0:15} : {1}".format('INFO','Setting loglevel to '+level)
+  def set(self,level,silent=True):
+    if not silent:
+      print "{0:15} : {1}".format('INFO','Setting loglevel to '+level)
     if level not in self.valid:
       self.display("not a valid level {0}".format(level))
       return(9)
