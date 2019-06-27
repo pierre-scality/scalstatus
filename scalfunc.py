@@ -19,13 +19,14 @@ local = salt.client.LocalClient()
 class ExtFunctions():
   def __init__(self,obj,msg='info'):
     self.display=Msg()
+    self.display.get()
     self.display.set(msg)
     self.obj=obj
 
   def execit(self):
     if self.obj == 'elasticsearch':
       self.check_elasticsearch()
-    if self.obj == 'zookeeper':
+    elif self.obj == 'zookeeper':
       self.check_zk()
     else:
       self.display.error('Object {0} has no function implemented'.format(self.obj))

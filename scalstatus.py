@@ -40,6 +40,7 @@ if args.verbose == True:
 if args.debug==True:
   display.set('debug',silent=False)
 
+
 local = salt.client.LocalClient()
 
 def disable_proxy():
@@ -54,6 +55,7 @@ def disable_proxy():
 
 def main():
   disable_proxy()
+  print 'main'+str(display.get())
   if args.file ==  None:
     check=Check(cont=args.cont,msg=display.get()) 
     #Check.check_server_status()

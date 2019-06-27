@@ -16,7 +16,9 @@ class Msg():
       return(9)
     self.level=level
 
-  def get(self):
+  def get(self,silent=False):
+    if silent == False:
+      print self.level
     return self.level
 
   def verbose(self,msg,label=None):

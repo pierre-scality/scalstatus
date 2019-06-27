@@ -132,6 +132,7 @@ class BuildReq():
 class Check():
   def __init__(self,definition=None,cont=False,msg='info'):
     self.display=Msg()
+    self.display.get()
     self.display.debug('initialising Check objectv')
     self.local = salt.client.LocalClient()
     self.cont=cont
@@ -145,9 +146,9 @@ class Check():
     # This list is for basic service checks 
     # service (as mentionned in yaml) : servicename, state to run, target targettype:saltformat target
     if self.definition != None:
-      prop=BuildReq(definition[0],msg=msg)
+      prop=BuildReq(definition[0],msg=self.display.get())
     else:
-      prop=BuildReq()
+      prop=BuildReq(msg=self.display.get())
     self.inputdict=prop.parse_definition()
     self.display.debug('Dict to run is {0}'.format(self.inputdict))
     self.check_server_status()
@@ -203,6 +204,7 @@ class Check():
     return(0)
 
   def do_extended(self,what):
+    self.display.get()
     func=ExtFunctions(what,msg=self.display.get())
     func.execit()
 
