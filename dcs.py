@@ -132,6 +132,24 @@ class Check():
     opts['quiet'] = True
     self.runner = salt.runner.RunnerClient(opts)
     self.tgtgrains='expr_form="grain"'
+    self.sysctlsettings=[
+    ["vm.swappiness",'1','='],
+    ["net.core.somaxconn",'4096','>'],
+    ["vm.min_free_kbytes",'2000000','>'],
+    ["net.ipv4.tcp_tw_reuse",'1','='],
+    ["net.ipv4.ip_local_port_range",'20480    65001','=']
+    ]
+    self.systemtest=[
+    ["NTP",'timedatectl | grep NTP | grep -v yes'],
+    ["NUMA",'cat /proc/cmdline | grep -v numa'],
+    ["THP",'cat /proc/cmdline | grep -v transparent_hugepage=never'],
+    ["TUNED",'tuned-adm active | grep -v latency-performance'],
+    ["IRQPS",'ps -edf | grep   irqbalance | grep -v grep','Process irqbalance is not running'],
+    ["IRQ",'grep ONESHOT  /etc/sysconfig/irqbalance |grep -v "^#" | grep -v ONESHOT=1','ONESHOT=1 setting'],
+    ["UUID",'egrep -E /scality/.*\(disk\|ssd\).*  /etc/fstab | grep -v s3 | grep -vi UUID','UUID /scality']
+    ]
+
+
   
   def __runtime(self,function,id): 
     if self.listonly==True:
@@ -308,15 +326,7 @@ class Check():
   """ check_sys_grep test eachi line of the test list, the grep cmd must be empty to be ok """
   def check_sys_grep(self):
     display.debug("Entering check sys") 
-    test=[
-    ["NTP",'timedatectl | grep NTP | grep -v yes'],
-    ["NUMA",'cat /proc/cmdline | grep -v numa'],
-    ["THP",'cat /proc/cmdline | grep -v transparent_hugepage=never'],
-    ["TUNED",'tuned-adm active | grep -v latency-performance'],
-    ["IRQPS",'ps -edf | grep   irqbalance | grep -v grep','Process irqbalance is not running'],
-    ["IRQPS",'grep ONESHOT  /etc/sysconfig/irqbalance |grep -v "^#" | grep -v ONESHOT=1','ONESHOT=1 setting'],
-    ["UUID",'egrep -E /scality/.*\(disk\|ssd\).*  /etc/fstab | grep -v s3 | grep -vi UUID','UUID /scality']
-    ]
+    test=self.systemtest
     rez={}
     temp=[]
     for t in test:
@@ -399,8 +409,72 @@ class Check():
       display.error('Unknown raid type {}'.format(ctrl))  
       return(1)
 
+  def check_sysctl(self):
+    display.debug("Entering check sysctl") 
+    test=self.sysctlsettings
+    saltout=local.cmd('*','sysctl.show')
+    bad=[]
+    current={}
+    good=[]
+    for srv in saltout.keys():
+      testok=True
+      this=saltout[srv]
+      for t in test:
+        p=t[0]
+        display.debug("Testing value {} on server {}".format(t,srv))
+        if p not in this.keys():
+          display.warning("Cannot test {} on {}".format(e,srv))
+          curval="{}:{}".format(p,'NOT FOUND')
+          testok=False
+        else:
+          curval="{}:{}".format(p,this[p])
+          v=t[1]
+          testok=value_check(this[p],v,t[2])
+        if testok == True:
+          display.verbose("OK srv {} sysctl {} = {}".format(srv,p,v)) 
+        else:
+          if srv not in bad:
+            bad.append(srv)
+            curval="{}:->>>{}".format(p,this[p])
+            display.error("SYSCTL {} {}".format(srv,curval))
+        if not srv in current.keys():
+          current[srv]=[curval]
+        else:
+          current[srv].append(curval)
+      if srv not in bad:
+        display.verbose("{} sysctl settings".format(srv),label='OK')
+        display.debug("\n{}".format(current[srv]))
+    if bad == []:
+      display.info("SYSCTL settings",label="OK")
+    else: 
+      display.error("sysctl not OK {}".format(bad))
 
- 
+def value_check(a,b,op):
+  display.debug("COMPARE Values {}:{}:{}".format(a,b,op))
+  # removing the multiple spaces to compare
+  nonint=False
+  if op == '=':
+    a=" ".join(a.split())
+    b=" ".join(b.split())
+    if a != b:
+      return False
+  elif op == '>':
+    try: a=int(a)
+    except ValueError: nonint=True
+    try: b=int(b)
+    except ValueError: nonint=True
+    if nonint:
+      display.error("Trying to compare non int values :{}:{}:".format(a,b))
+      return False 
+    if int(a) < int(b):
+      return False
+  else:
+    display.error("Unknow operator {}".format(op)) 
+    return False
+  return True
+
+
+
 def check_json(j,p="equal"):
   js=json.loads(j)
   
@@ -417,6 +491,7 @@ def main():
   check.check_es_status()
   check.check_es_indices()
   check.check_var_space()
+  check.check_sysctl()
   check.check_sys_grep()
   if raid != None:
     check.check_raid(raid[0],raid[1])
