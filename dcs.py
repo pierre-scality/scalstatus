@@ -384,6 +384,18 @@ class Check():
             else:
               bad.append(srv)
               display.error("{} battery status is {}".format(srv,s))
+      # No-Battery Write Cache: Enabled
+          k='No-Battery Write Cache'
+          v='Disabled' 
+          if l[0].lstrip()  == k:
+            s=l[1].lstrip()
+            if s == v:
+              good.append(srv)
+              display.debug("{} {} is {}".format(srv,k,s))
+            else:
+              bad.append(srv)
+              display.error("{} {} is {} it should be {}".format(srv,k,s,v))
+
       if bad == []:
         display.info("Battery status is {}".format(s),label="OK")
       return(0)
