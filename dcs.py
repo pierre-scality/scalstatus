@@ -15,21 +15,33 @@ import salt.client
 import salt.config
 import salt.runner 
 
+supported_ctrl=('ssacli','storcli')
+defaultssactrlid=2
+me=sys.argv[0]
+helpmessage="""
+    Check server's process status.
+
+Run without argument or add -r to check RAID configuration (add -i for ctrl id, see -i option)
+"""
+linesample="# {} -r ssacli -i 0".format(me)
+helpmessage=helpmessage+linesample
+
 
 try:
-  parser = argparse.ArgumentParser(description="Check server's process status")
+  parser = argparse.ArgumentParser(description=helpmessage,formatter_class=argparse.RawTextHelpFormatter)
   parser.add_argument('-d', '--debug', dest='debug', action="store_true", default=False ,help='Set script in DEBUG mode ')
   parser.add_argument('-c', '--cont', dest='cont', action="store_true", default=False, help='If this option is set program wont quit if it finds missing servers, unexpected results may happend')
-  parser.add_argument('-f', '--file', nargs=1, const=None ,help='Load yaml property file')
+  # not implemented # parser.add_argument('-f', '--file', nargs=1, const=None ,help='Load yaml property file')
+  parser.add_argument('-i', '--ctrlid', dest='ctrlid', default=defaultssactrlid ,help="Specify the raid controler id, default is {} (usual ssacli ctrl id".format(defaultssactrlid))
   parser.add_argument('-l', '--list', dest='listonly', action="store_true", default=False ,help='Do not execute but display all function name and id that would be excuted')
-  parser.add_argument('-r', '--raid', dest='raid', nargs=2, metavar=('type', 'ctrlid') , help='tell which RAID controler to check and controler id\n. Controler can only be  ssa|storcli and ctrlid an integer')
-  parser.add_argument('-t', '--target', nargs=1, const=None ,help='Specify target daemon to check queue')
+  parser.add_argument('-r', '--raid', dest='raid', nargs=1, choices=supported_ctrl, default=None, \
+    help='tell which RAID controler to check and controler id\n. Controler can only be  ssa|storcli and ctrlid an integer.\n Currently storcli number is needed but not used ...')
+  parser.add_argument('-R', '--raidonly', dest='raidonly', action="store_true", default=False, help='Execute only raid card checks') 
   parser.add_argument('-v', '--verbose', dest='verbose', action="store_true", default=False ,help='Set script in VERBOSE mode ')
-  parser.add_argument('--zkcount', dest='zkcount',default=5 ,help='Specify number of ZK hosts')
   args=parser.parse_args()
 except SystemExit:
-  bad = sys.exc_info()[1]
-  parser.print_help(sys.stderr)
+  #bad = sys.exc_info()[1]
+  #parser.print_usage(sys.stderr)
   exit(9)
 
 
@@ -97,8 +109,6 @@ class Msg():
 
 display=Msg('info')
 
-
-#args = parser.parse_args()
 args,cli=parser.parse_known_args()
 if args.verbose == True:
   display.set('verbose')
@@ -106,7 +116,7 @@ if args.debug==True:
   display.set('debug')
   display.debug("Args : {} and {}".format(args,cli))
 
-local = salt.client.LocalClient()
+saltquery = salt.client.LocalClient()
 
 def disable_proxy():
   done=0
@@ -287,7 +297,7 @@ class Check():
 
   def check_es_version(self):
     display.debug("entering check_es_version")
-    saltout=local.cmd('roles:ROLE_ELASTIC','cmd.run',['curl -s -XGET http://localhost:9200'],expr_form="grain")
+    saltout=saltquery.cmd('roles:ROLE_ELASTIC','cmd.run',['curl -s -XGET http://localhost:9200'],expr_form="grain")
     display.tofile("check_es_version",saltout)
     # return dict of values with minions.
     display.debug("es output {}".format(saltout))
@@ -296,7 +306,7 @@ class Check():
 
   def check_var_space(self):
     display.debug("entering check_var_space")
-    saltout=local.cmd('*','disk.percent',['/var'])
+    saltout=saltquery.cmd('*','disk.percent',['/var'])
     display.debug("/var test raw result :\n {}".format(saltout))
     good=[]
     bad=[]
@@ -334,7 +344,7 @@ class Check():
         msg = t[2]
       else:
         msg = "setting"
-      saltout=local.cmd('*','cmd.run',[t[1]])
+      saltout=saltquery.cmd('*','cmd.run',[t[1]])
       display.verbose("test is '{}'".format(t[1]))
       display.debug("test {} :\n salt output {}".format(t[0],saltout))
       for e in saltout:
@@ -350,73 +360,76 @@ class Check():
         display.info("{} {}".format(t[0],msg),label="OK")
 
   def check_raid(self,ctrl,id):
-    display.debug("Entering check raid type {}".format(ctrl))
-    supported_ctrl=('ssacli','storcli')
-    if ctrl not in supported_ctrl:
-      display.error("raid type {} not in {}".format(ctrl,supported_ctrl))
-      exit(9)
+    display.debug("Entering check raid type {} {}".format(ctrl,id))
     try:
       ctrlid=int(id)
     except ValueError:
       display.error("raid number not an interger : {}".format(ctrlid))
       exit(9)
- 
+    ssacli={
+    'Battery/Capacitor Status' : 'OK',
+    'No-Battery Write Cache' : 'Disabled',
+    'Cache Ratio' : '10% Read / 90% Write'
+    }
+    # for readability the value has 2 values, expected value and long label separated by |
+    storcli={
+    'BBU' : 'Opt|Battery backup unit',
+    }
+     
     if ctrl == 'ssacli':
       cmd="ssacli ctrl slot={} show".format(ctrlid)
-      saltout=local.cmd('roles:ROLE_STORE','cmd.run',[cmd],expr_form="grain")
+      saltout=saltquery.cmd('roles:ROLE_STORE','cmd.run',[cmd],expr_form="grain")
       display.debug("Raid controller {} cmd {} ".format(ctrl,cmd))
       display.debug("sal output{}".format(saltout))
       good=[]
       bad=[]
-      for srv in saltout.keys():
-        line=saltout[srv].split('\n')
-        if saltout[srv].split(':')[0].lstrip() == "Error":
-          bad.append(srv)
-          display.error("Server {} return an error {}".format(srv,saltout[srv]))
-          continue 
-        for L in line:
-          l=L.split(':')
-          if l[0].lstrip()  == 'Battery/Capacitor Status':
-            s=l[1].lstrip()
-            if s == 'OK':
-              good.append(srv)
-              display.debug("{} battery status is {}".format(srv,s))
-            else:
-              bad.append(srv)
-              display.error("{} battery status is {}".format(srv,s))
-      # No-Battery Write Cache: Enabled
-          k='No-Battery Write Cache'
-          v='Disabled' 
-          if l[0].lstrip()  == k:
-            s=l[1].lstrip()
-            if s == v:
-              good.append(srv)
-              display.debug("{} {} is {}".format(srv,k,s))
-            else:
-              bad.append(srv)
-              display.error("{} {} is {} it should be {}".format(srv,k,s,v))
-
-      if bad == []:
-        display.info("Battery status is {}".format(s),label="OK")
+      for k in ssacli.keys():
+        v=ssacli[k]
+        for srv in saltout.keys():
+          display.debug('check {} value {} for {}'.format(k,v,srv))
+          line=saltout[srv].split('\n')
+          if saltout[srv].split(':')[0].lstrip() == "Error":
+            bad.append(srv)
+            display.error("Server {} return an error {}".format(srv,saltout[srv]))
+            continue 
+          for L in line:
+            l=L.split(':')
+            if l[0].lstrip()  == k:
+              s=l[1].lstrip()
+              if s == v:
+                good.append(srv)
+                display.debug("{} {} is {}".format(srv,k,s))
+              else:
+                bad.append(srv)
+                display.error("{} is {} it should be {} on : {}".format(k,s,v,srv))
+        if bad == []:
+          display.info("{} is {}".format(k,v),label="OK")
+        good=[]
+        bad=[]
       return(0)
     elif ctrl == 'storcli':
       cmd='/opt/MegaRAID/storcli/storcli64 show J'
-      saltout=local.cmd('roles:ROLE_STORE','cmd.run',[cmd],expr_form="grain")
+      saltout=saltquery.cmd('roles:ROLE_STORE','cmd.run',[cmd],expr_form="grain")
       display.debug("Raid controller {} cmd {} ".format(ctrl,cmd))
       good=[]
       bad=[]
-      for srv in saltout.keys():
-        j=json.loads(saltout[srv])
-        s=j['Controllers'][0]["Response Data"]["System Overview"][0]["BBU"]
-        if s == 'Opt':
-          good.append(srv)
-          display.debug("{} battery status is {}".format(srv,s))
-        else:
-          bad.append(srv)
-          display.error("{} battery status is {}".format(srv,s))
-      if bad == []:
-        display.info("Battery status is {}".format(s),label="OK")   
-      return(0)
+      for k in storcli.keys():
+        v=storcli[k].split('|')[0]
+        c=storcli[k].split('|')[1]
+        for srv in saltout.keys():
+          j=json.loads(saltout[srv])
+          s=j['Controllers'][0]["Response Data"]["System Overview"][0][k]
+          if s == v:
+            good.append(srv)
+            display.debug("{} {} is {}".format(srv,k,s))
+          else:
+            bad.append(srv)
+            display.error("{} ({}) is {} it should be {} on : {}".format(c,v,s,v,srv))
+        if bad == []:
+          display.info("{} is {}".format(c,v),label="OK")
+        good=[]
+        bad=[]
+        return(0)
     else:
       display.error('Unknown raid type {}'.format(ctrl))  
       return(1)
@@ -496,7 +509,15 @@ def main():
   disable_proxy()
   root_priv()
   check=Check(cont=args.cont,listonly=args.listonly) 
-  raid=args.raid
+  if args.raid != None:
+    raid=args.raid[0]
+    if args.ctrlid != None:
+      ctrlid=args.ctrlid 
+    else:
+      ctrlid=defaultssactrlid
+  if args.raidonly == True:
+    check.check_raid(raid,ctrlid)
+    exit(0)
   # run all procs
   check.minion_status()
   check.check_es_version()
@@ -506,7 +527,7 @@ def main():
   check.check_sysctl()
   check.check_sys_grep()
   if raid != None:
-    check.check_raid(raid[0],raid[1])
+    check.check_raid(raid,ctrlid)
       
         
 
