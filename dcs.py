@@ -441,7 +441,7 @@ class Check():
   def check_sysctl(self):
     display.debug("Entering check sysctl") 
     test=self.sysctlsettings
-    saltout=local.cmd('*','sysctl.show')
+    saltout=saltquery.cmd('*','sysctl.show')
     bad=[]
     current={}
     good=[]
