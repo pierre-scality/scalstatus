@@ -6,12 +6,15 @@ Option -v show the results
 Option -d show everything 
 Most of the system checks are based on grep -v so no result it show on success.
 The script runs without option unless you want to check the raid card status.
-In this case you need to add the -r <ctrl command> <Ctrl number>
+In this case you need to add the -r <ctrl command> and -i <Ctrl number>
+-i is optional as it has default of 2 for ssacli and should not be needed for storcli (always c0)
 ctrl command must be either ssacli or storcli (exactly)
+
+raid check won't work if you have different type/ctdl id on all servers.
 
 ## Usage 
 ```
-# ./dcs.py  -r ssacli 2 
+# ./dcs.py  -r ssacli -i 2 
 INFO            : All servers available
 OK              : All minions have Check ES version : 6.7.1
 OK              : Elastic search status is green
