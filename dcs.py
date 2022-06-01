@@ -174,7 +174,11 @@ class Check():
     #display.debug("Entering __dict_field {} {}".format(dict,lst))
     rez={}
     for k in dict.keys():
-      jes=json.loads(dict[k])
+      try: 
+        jes=json.loads(dict[k])
+      except ValueError:
+        display.error("Cannot deserialise {} value '{}', final result wont include this entry".format(k,dict[k]))
+        continue
       this=self.__dict_get(jes,lst)
       display.debug("__compare_dict minion {}  {}".format(k,this))
       if this not in rez.keys():
@@ -508,7 +512,8 @@ def check_json(j,p="equal"):
 def main():
   disable_proxy()
   root_priv()
-  check=Check(cont=args.cont,listonly=args.listonly) 
+  check=Check(cont=args.cont,listonly=args.listonly)
+  raid=args.raid
   if args.raid != None:
     raid=args.raid[0]
     if args.ctrlid != None:
