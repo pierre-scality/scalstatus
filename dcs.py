@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from __future__ import print_function
 
@@ -36,7 +36,9 @@ try:
   parser.add_argument('-l', '--list', dest='listonly', action="store_true", default=False ,help='Do not execute but display all function name and id that would be excuted')
   parser.add_argument('-r', '--raid', dest='raid', nargs=1, choices=supported_ctrl, default=None, \
     help='tell which RAID controler to check and controler id\n. Controler can only be  ssa|storcli and ctrlid an integer.\n Currently storcli number is needed but not used ...')
+  parser.add_argument('--roles', dest='roles', action="store_true", help='display a digest of the roles')
   parser.add_argument('-R', '--raidonly', dest='raidonly', action="store_true", default=False, help='Execute only raid card checks') 
+  parser.add_argument('-s', '--sup', dest='sup', action="store_true", default=False ,help='Do sup check only')
   parser.add_argument('-v', '--verbose', dest='verbose', action="store_true", default=False ,help='Set script in VERBOSE mode ')
   args=parser.parse_args()
 except SystemExit:
@@ -105,7 +107,8 @@ class Msg():
   def tofile(self,function,msg):
     d=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     header="{} : {} ".format(self.level,d)
-    self.fd.write("{} : {} : {}".format(header,function,msg))
+    self.fd.write("{} : {} : {}\n".format(header,function,msg))
+    self.fd.write("\n".format(header,function,msg))
 
 display=Msg('info')
 
@@ -142,24 +145,6 @@ class Check():
     opts['quiet'] = True
     self.runner = salt.runner.RunnerClient(opts)
     self.tgtgrains='expr_form="grain"'
-    self.sysctlsettings=[
-    ["vm.swappiness",'1','='],
-    ["net.core.somaxconn",'4096','>'],
-    ["vm.min_free_kbytes",'2000000','>'],
-    ["net.ipv4.tcp_tw_reuse",'1','='],
-    ["net.ipv4.ip_local_port_range",'20480    65001','=']
-    ]
-    self.systemtest=[
-    ["NTP",'timedatectl | grep NTP | grep -v yes'],
-    ["NUMA",'cat /proc/cmdline | grep -v numa'],
-    ["THP",'cat /proc/cmdline | grep -v transparent_hugepage=never'],
-    ["TUNED",'tuned-adm active | grep -v latency-performance'],
-    ["IRQPS",'ps -edf | grep   irqbalance | grep -v grep','Process irqbalance is not running'],
-    ["IRQ",'grep ONESHOT  /etc/sysconfig/irqbalance |grep -v "^#" | grep -v ONESHOT=1','ONESHOT=1 setting'],
-    ["UUID",'egrep -E /scality/.*\(disk\|ssd\).*  /etc/fstab | grep -v s3 | grep -vi UUID','UUID /scality']
-    ]
-
-
   
   def __runtime(self,function,id): 
     if self.listonly==True:
@@ -174,11 +159,7 @@ class Check():
     #display.debug("Entering __dict_field {} {}".format(dict,lst))
     rez={}
     for k in dict.keys():
-      try: 
-        jes=json.loads(dict[k])
-      except ValueError:
-        display.error("Cannot deserialise {} value '{}', final result wont include this entry".format(k,dict[k]))
-        continue
+      jes=json.loads(dict[k])
       this=self.__dict_get(jes,lst)
       display.debug("__compare_dict minion {}  {}".format(k,this))
       if this not in rez.keys():
@@ -237,6 +218,33 @@ class Check():
         display.warning('There are unavailable servers which may lead to unexpected results ({0})'.format(','.join(bad)))
     self.update_struct(bad,reverse=True)
  
+  def showroles(self):
+    self.__runtime('show_roles',1)
+    retcode=True
+    display.info("Getting all roles (can take a few minutes)")
+    payload={'fun': 'survey.hash', 'arg': ['*', 'grains.get', 'roles']}
+    try:
+      saltout=self.runner.cmd(**payload)
+    except salt.exceptions.SaltException as e:
+      display.error("Error running runner {}".format(payload),fatal=True)
+    display.tofile("minion roles",saltout)
+    tab=0
+    max=0
+    for el in saltout:
+      tab=len(el['result'])
+      if tab > max:
+        max=tab
+    tab=max 
+    display.debug("roles {} count {}".format(el['result'],tab))
+    for el in saltout:
+      roles=(el['result']).strip('][').split(', ')
+      roles=(el['result'])[1:-1]
+      minions=" ".join(el['pool'])
+      this="{:{}} : {}".format(roles,tab,minions)
+      roles=""
+      
+      display.raw(this)
+    exit(0) 
 
   def es_query(self,request):
     display.debug("prepare to run es query : {}".format(request))
@@ -301,13 +309,81 @@ class Check():
 
   def check_es_version(self):
     display.debug("entering check_es_version")
-    saltout=saltquery.cmd('roles:ROLE_ELASTIC','cmd.run',['curl -s -XGET http://localhost:9200'],expr_form="grain")
+    #saltout=saltquery.cmd('roles:ROLE_ELASTIC','cmd.run',['curl -s -XGET http://localhost:9200'],expr_form="grain")
+    saltout=saltquery.cmd('roles:ROLE_ELASTIC','cmd.run',['curl -s -XGET http://localhost:9200'],tgt_type="grain")
     display.tofile("check_es_version",saltout)
     # return dict of values with minions.
     display.debug("es output {}".format(saltout))
     dict=self.__compare_minion_json(saltout,['version','number'])
     self.__analyse_minion_same(dict,"Check ES version")
 
+  def check_sup(self):
+    display.debug("entering check_sup")
+    RING={'DATA':'data','META':'meta'}
+    for ring in RING.keys():
+      cmd='ringsh supervisor ringConfigGet '+ring
+      saltout=saltquery.cmd('roles:ROLE_SUP','cmd.run',[cmd],tgt_type="grain")
+      display.tofile("check_sup",saltout)
+      self.check_ring_config(saltout,ring,RING[ring])
+      cmd='ringsh supervisor ringStorage '+ring
+      saltout=saltquery.cmd('roles:ROLE_SUP','cmd.run',[ring],tgt_type="grain")
+      display.tofile("check_sup",saltout)
+      self.check_ring_storage(saltout,ring)
+    
+  def check_ring_config(self,l,ring,ringtype):
+    display.debug("check_ringconfig with {}".format(l))
+    SELF_HEAL={
+    'data':{'rebuild_auto':'1','chordpurge_enable':'1','join_auto':'2','chordproxy_enable':'1','chordrepair_enable':'1','chordcsd_enable':'1'},
+    'meta':{'rebuild_auto':'1','chordpurge_enable':'1','join_auto':'2','chordproxy_enable':'1','chordrepair_enable':'1','chordcsd_enable':'0'}
+    }
+    if not ringtype in SELF_HEAL.keys():
+      display.error("can't find ring type {} in {}".format(ringtype,SELF_HEAL.keys()))
+      return(1)
+    expected_p=SELF_HEAL[ringtype]
+    healthy=True
+    if len(l.keys()) != 1:
+      display.error("More that 1 key in sup data, aborting : {}".format(l))
+      return(1)
+    for sup in l.keys():
+      display.debug("sup name is {}".format(sup))
+    for e in l[sup].split("\n"):
+      cat=e.split()[3].rstrip(',')
+      if cat in expected_p.keys():
+        current=e.split()[5]
+        display.verbose("{} : Param {} is {} wanted {}".format(ring,cat,current,expected_p[cat]))
+        if expected_p[cat] != current:
+          healthy=False
+          display.error("{} : Param {} is expected to be {} but is {}".format(ring,cat,expected_p[cat],current))
+    if healthy:
+      display.info("Ring parameters for {}".format(ring),label="OK")
+
+  
+  def check_ring_storage(self,l,ring):
+    display.debug("check_ringstorage with {}".format(l))
+    STORAGE_DATA={'Bad objects': '0' , 'Lost objects' : '0'}
+    healthy=True
+    if len(l.keys()) != 1:
+      display.error("More that 1 key in sup data, aborting : {}".format(l))
+    else:
+      for sup in l.keys():
+        display.debug("sup name is {}".format(sup))
+      for e in l[sup].split("\n"):
+        f=e.split(':')
+        #print(f,STORAGE_DATA.keys())
+        #if f[0] in STORAGE_DATA.keys():
+        for section in STORAGE_DATA.keys():
+          key = f[0].lstrip()
+          if section == key:
+            value = f[1].lstrip()
+            if value != str(STORAGE_DATA[section]):
+              display.error("Expecting {} to be {} but found {}".format(section,STORAGE_DATA[section],value))
+              healthy=False
+            else:
+              display.verbose("{} is {} as expected ({})".format(section,STORAGE_DATA[section],value))
+    if healthy:
+      display.info("Ring storage for {}".format(ring),label="OK")           
+    
+ 
   def check_var_space(self):
     display.debug("entering check_var_space")
     saltout=saltquery.cmd('*','disk.percent',['/var'])
@@ -317,6 +393,9 @@ class Check():
     issue=[]
     ok=True
     for k in saltout.keys():
+      if saltout[k] == False:
+        display.warning("Server {} is probably unreachable, this server will not be included in this report".format(k))
+        continue
       if saltout[k] == {}:
         issue.append(k)
       else:
@@ -340,7 +419,15 @@ class Check():
   """ check_sys_grep test eachi line of the test list, the grep cmd must be empty to be ok """
   def check_sys_grep(self):
     display.debug("Entering check sys") 
-    test=self.systemtest
+    test=[
+    ["NTP",'timedatectl | grep NTP | grep -v yes'],
+    ["NUMA",'cat /proc/cmdline | grep -v numa'],
+    ["THP",'cat /proc/cmdline | grep -v transparent_hugepage=never'],
+    ["TUNED",'tuned-adm active | grep -v latency-performance'],
+    ["IRQPS",'ps -edf | grep   irqbalance | grep -v grep','Process irqbalance is not running'],
+    ["IRQPS",'grep ONESHOT  /etc/sysconfig/irqbalance |grep -v "^#" | grep -v ONESHOT=1','ONESHOT=1 setting'],
+    ["UUID",'egrep -E /scality/.*\(disk\|ssd\).*  /etc/fstab | grep -v s3 | grep -vi UUID','UUID /scality']
+    ]
     rez={}
     temp=[]
     for t in test:
@@ -352,6 +439,9 @@ class Check():
       display.verbose("test is '{}'".format(t[1]))
       display.debug("test {} :\n salt output {}".format(t[0],saltout))
       for e in saltout:
+        if saltout[e] == False:
+          display.warning("Server {} is probably unreachable, this server will not be included in this report".format(e))
+          continue
         if saltout[e] != '':
           if not t[0] in rez:
             rez[t[0]]=[]
@@ -382,9 +472,10 @@ class Check():
      
     if ctrl == 'ssacli':
       cmd="ssacli ctrl slot={} show".format(ctrlid)
-      saltout=saltquery.cmd('roles:ROLE_STORE','cmd.run',[cmd],expr_form="grain")
+      #saltout=saltquery.cmd('roles:ROLE_STORE','cmd.run',[cmd],expr_form="grain")
+      saltout=saltquery.cmd('roles:ROLE_STORE','cmd.run',[cmd],tgt_type="grain")
       display.debug("Raid controller {} cmd {} ".format(ctrl,cmd))
-      display.debug("sal output{}".format(saltout))
+      display.debug("salt output{}".format(saltout))
       good=[]
       bad=[]
       for k in ssacli.keys():
@@ -413,7 +504,8 @@ class Check():
       return(0)
     elif ctrl == 'storcli':
       cmd='/opt/MegaRAID/storcli/storcli64 show J'
-      saltout=saltquery.cmd('roles:ROLE_STORE','cmd.run',[cmd],expr_form="grain")
+      #saltout=saltquery.cmd('roles:ROLE_STORE','cmd.run',[cmd],expr_form="grain")
+      saltout=saltquery.cmd('roles:ROLE_STORE','cmd.run',[cmd],tgt_type="grain")
       display.debug("Raid controller {} cmd {} ".format(ctrl,cmd))
       good=[]
       bad=[]
@@ -438,72 +530,8 @@ class Check():
       display.error('Unknown raid type {}'.format(ctrl))  
       return(1)
 
-  def check_sysctl(self):
-    display.debug("Entering check sysctl") 
-    test=self.sysctlsettings
-    saltout=saltquery.cmd('*','sysctl.show')
-    bad=[]
-    current={}
-    good=[]
-    for srv in saltout.keys():
-      testok=True
-      this=saltout[srv]
-      for t in test:
-        p=t[0]
-        display.debug("Testing value {} on server {}".format(t,srv))
-        if p not in this.keys():
-          display.warning("Cannot test {} on {}".format(e,srv))
-          curval="{}:{}".format(p,'NOT FOUND')
-          testok=False
-        else:
-          curval="{}:{}".format(p,this[p])
-          v=t[1]
-          testok=value_check(this[p],v,t[2])
-        if testok == True:
-          display.verbose("OK srv {} sysctl {} = {}".format(srv,p,v)) 
-        else:
-          if srv not in bad:
-            bad.append(srv)
-            curval="{}:->>>{}".format(p,this[p])
-            display.error("SYSCTL {} {}".format(srv,curval))
-        if not srv in current.keys():
-          current[srv]=[curval]
-        else:
-          current[srv].append(curval)
-      if srv not in bad:
-        display.verbose("{} sysctl settings".format(srv),label='OK')
-        display.debug("\n{}".format(current[srv]))
-    if bad == []:
-      display.info("SYSCTL settings",label="OK")
-    else: 
-      display.error("sysctl not OK {}".format(bad))
 
-def value_check(a,b,op):
-  display.debug("COMPARE Values {}:{}:{}".format(a,b,op))
-  # removing the multiple spaces to compare
-  nonint=False
-  if op == '=':
-    a=" ".join(a.split())
-    b=" ".join(b.split())
-    if a != b:
-      return False
-  elif op == '>':
-    try: a=int(a)
-    except ValueError: nonint=True
-    try: b=int(b)
-    except ValueError: nonint=True
-    if nonint:
-      display.error("Trying to compare non int values :{}:{}:".format(a,b))
-      return False 
-    if int(a) < int(b):
-      return False
-  else:
-    display.error("Unknow operator {}".format(op)) 
-    return False
-  return True
-
-
-
+ 
 def check_json(j,p="equal"):
   js=json.loads(j)
   
@@ -512,8 +540,13 @@ def check_json(j,p="equal"):
 def main():
   disable_proxy()
   root_priv()
-  check=Check(cont=args.cont,listonly=args.listonly)
-  raid=args.raid
+  check=Check(cont=args.cont,listonly=args.listonly) 
+  if args.sup:
+    check.check_sup()
+    exit(0)
+  if args.roles:
+    check.showroles()
+    exit(0)
   if args.raid != None:
     raid=args.raid[0]
     if args.ctrlid != None:
@@ -528,10 +561,10 @@ def main():
   check.check_es_version()
   check.check_es_status()
   check.check_es_indices()
+  check.check_sup()
   check.check_var_space()
-  check.check_sysctl()
   check.check_sys_grep()
-  if raid != None:
+  if args.raid != None:
     check.check_raid(raid,ctrlid)
       
         
